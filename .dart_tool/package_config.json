@@ -26,6 +26,12 @@
       "languageVersion": "2.18"
     },
     {
+      "name": "auto_scroll",
+      "rootUri": "file:///C:/Users/arafe/AppData/Local/Pub/Cache/hosted/pub.dev/auto_scroll-0.2.0",
+      "packageUri": "lib/",
+      "languageVersion": "3.0"
+    },
+    {
       "name": "boolean_selector",
       "rootUri": "file:///C:/Users/arafe/AppData/Local/Pub/Cache/hosted/pub.dev/boolean_selector-2.1.1",
       "packageUri": "lib/",
@@ -84,6 +90,12 @@
       "rootUri": "file:///C:/Users/arafe/AppData/Local/Pub/Cache/hosted/pub.dev/flutter_plugin_android_lifecycle-2.0.19",
       "packageUri": "lib/",
       "languageVersion": "3.2"
+    },
+    {
+      "name": "flutter_resize_observer",
+      "rootUri": "file:///C:/Users/arafe/AppData/Local/Pub/Cache/hosted/pub.dev/flutter_resize_observer-0.1.0",
+      "packageUri": "lib/",
+      "languageVersion": "2.17"
     },
     {
       "name": "flutter_test",
@@ -314,7 +326,7 @@
       "languageVersion": "3.3"
     }
   ],
-  "generated": "2024-05-07T21:00:16.357989Z",
+  "generated": "2024-05-08T08:27:46.227411Z",
   "generator": "pub",
   "generatorVersion": "3.3.0"
 }

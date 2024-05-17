@@ -1,12 +1,15 @@
+import 'dart:core';
+
+import 'package:crosschatsdk/recentchatssdk.dart';
 import 'package:crosschatsdk/videocall.dart';
 import 'package:crosschatsdk/voicecall.dart';
 import 'package:flutter/material.dart';
-
 import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:path/path.dart' as path;
+import 'package:auto_scroll/auto_scroll.dart';
 
 class ChatScreen extends StatefulWidget {
   final String conversationId;
@@ -27,12 +30,6 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-enum MessageType {
-  text,
-  attachment,
-  voice,
-}
-
 class _ChatScreenState extends State<ChatScreen> {
   late TextEditingController _textEditingController = TextEditingController();
   bool _isRecording = false;
@@ -44,8 +41,11 @@ class _ChatScreenState extends State<ChatScreen> {
   String? selectedEmoji; // Variable to store the selected emoji
   List<dynamic> messages = [];
   String currentUserId = 'participant1';
+  Map<String, int> lastMessageIndexMap = {}; // Declare lastMessageIndexMap here
+
   String _filePath = '';
   late IO.Socket socket;
+  late AutoScrollController _autoScrollerController;
   final ScrollController _scrollController =
       ScrollController(); // Add ScrollController
 
@@ -63,13 +63,15 @@ class _ChatScreenState extends State<ChatScreen> {
   ];
 
   List<dynamic> previousMessages = [];
+
+  get Record => false;
   Future<void> fetchLastMessage() async {
     final response = await http.get(
       Uri.parse(
-          'http://10.0.2.2:9090/conversations/${widget.conversationId}/messages?last=true'),
+          'http://10.0.2.2:8080/conversations/${widget.conversationId}/messages?last=true'),
       headers: {
         'x-secret-key':
-            '7b2613ea2fd6bb949db6d600da8e13bcb3974166', // Include the API key in the request headers
+            '80e01067bd82ddb68ce5091bd07c8e1946ef4626', // Include the API key in the request headers
       },
     );
 
@@ -88,28 +90,81 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    fetchLastMessage(); // Charger initialement le dernier message
     connectToSocket();
     _textEditingController = TextEditingController();
-    // Ajouter un écouteur pour détecter le début du défilement vers le haut
+    // Fetch the last messages when the screen initializes
+    fetchLastMessages().then((_) {
+      // Scroll to the bottom when the last messages are fetched
+      WidgetsBinding.instance!.addPostFrameCallback((_) {
+        _scrollToBottom();
+      });
+    });
+    _autoScrollerController = AutoScrollController();
+    // Fetch previous sent messages when the screen initializes
+    fetchPreviousSentMessages();
+    // Add a listener to detect when the user scrolls to the top of the list
     _scrollController.addListener(() {
       if (_scrollController.position.atEdge) {
         if (_scrollController.position.pixels == 0) {
-          // Début du défilement vers le haut
-          fetchPreviousMessages(); // Charger les messages précédents
+          // Start fetching previous messages when scrolled to the top
+          fetchPreviousMessages();
         }
       }
     });
   }
 
-// Méthode pour charger les messages précédents
+  Future<void> fetchPreviousSentMessages() async {
+    final response = await http.get(
+      Uri.parse(
+          'http://10.0.2.2:8080/conversations/${widget.conversationId}/messages?sender=${widget.senderName}'),
+      headers: {
+        'x-secret-key':
+            '80e01067bd82ddb68ce5091bd07c8e1946ef4626', // Include the API key in the request headers
+      },
+    );
+
+    if (response.statusCode == 200) {
+      final Map<String, dynamic> responseData = json.decode(response.body);
+      List<dynamic> previousSentMessages = responseData['messages'] ?? [];
+      setState(() {
+        messages.addAll(
+            previousSentMessages); // Add previous sent messages to the list of messages
+      });
+    } else {
+      throw Exception('Failed to load previous messages');
+    }
+  }
+
+  Future<void> fetchLastMessages() async {
+    final response = await http.get(
+      Uri.parse(
+          'http://10.0.2.2:8080/conversations/${widget.conversationId}/messages?last=true'),
+      headers: {
+        'x-secret-key':
+            '80e01067bd82ddb68ce5091bd07c8e1946ef4626', // Include the API key in the request headers
+      },
+    );
+
+    if (response.statusCode == 200) {
+      final Map<String, dynamic> responseData = json.decode(response.body);
+      List<dynamic> lastMessage = responseData['messages'] ?? [];
+      setState(() {
+        messages =
+            lastMessage; // Update the messages with the last message only
+      });
+    } else {
+      throw Exception('Failed to load last messages');
+    }
+  }
+
+  // Méthode pour charger les messages précédents
   Future<void> fetchPreviousMessages() async {
     final response = await http.get(
       Uri.parse(
-          'http://10.0.2.2:9090/conversations/${widget.conversationId}/messages?before=${messages.last['timestamp']}'),
+          'http://10.0.2.2:/conversations/${widget.conversationId}/messages?before=${messages.last['timestamp']}'),
       headers: {
         'x-secret-key':
-            '7b2613ea2fd6bb949db6d600da8e13bcb3974166', // Include the API key in the request headers
+            '80e01067bd82ddb68ce5091bd07c8e1946ef4626', // Include the API key in the request headers
       },
     );
 
@@ -142,10 +197,10 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> fetchMessages() async {
     final response = await http.get(
       Uri.parse(
-          'http://10.0.2.2:9090/conversations/${widget.conversationId}/messages'),
+          'http://10.0.2.2:8080/conversations/${widget.conversationId}/messages'),
       headers: {
         'x-secret-key':
-            '7b2613ea2fd6bb949db6d600da8e13bcb3974166', // Include the API key in the request headers
+            '80e01067bd82ddb68ce5091bd07c8e1946ef4626', // Include the API key in the request headers
       },
     );
 
@@ -160,7 +215,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void connectToSocket() {
-    socket = IO.io('http://10.0.2.2:9090', <String, dynamic>{
+    socket = IO.io('http://10.0.2.2:8080', <String, dynamic>{
       'transports': ['websocket'],
       'autoConnect': false,
     });
@@ -203,7 +258,7 @@ class _ChatScreenState extends State<ChatScreen> {
     var request = http.MultipartRequest(
       'POST',
       Uri.parse(
-          'http://10.0.2.2:9090/conversations/${widget.conversationId}/attachments'),
+          'http://10.0.2.2:8080/conversations/${widget.conversationId}/attachments'),
     );
     request.files.add(await http.MultipartFile.fromPath('file', filePath,
         filename: fileName));
@@ -237,7 +292,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // Function to send a POST request to add emoji to a message
   Future<void> addEmojiToMessage(String messageId, String emoji) async {
     final response = await http.post(
-      Uri.parse('http://10.0.2.2:9090/messages/$messageId/emoji'),
+      Uri.parse('http://10.0.2.2:8080/messages/$messageId/emoji'),
       body: json.encode({'emoji': emoji}),
       headers: {'Content-Type': 'application/json'},
     );
@@ -264,7 +319,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _displayAttachments() async {
     try {
       final response = await http.get(Uri.parse(
-          'http://10.0.2.2:9090/conversations/${widget.conversationId}/attachments'));
+          'http://10.0.2.2:8080/conversations/${widget.conversationId}/attachments'));
 
       if (response.statusCode == 200) {
         List<dynamic> attachments = json.decode(response.body);
@@ -309,90 +364,71 @@ class _ChatScreenState extends State<ChatScreen> {
     required List<String> emojis,
     required bool isLastMessageFromUser,
   }) {
-    final bool isMe = senderId == currentUserId;
-    final bool showAvatar = !isMe && isLastMessageFromUser;
-    final Color backgroundColor = isMe ? Colors.blue : Colors.grey;
-    final Color textColor = isMe ? Colors.white : Colors.black;
-    final CrossAxisAlignment crossAxisAlignment =
-        isMe ? CrossAxisAlignment.start : CrossAxisAlignment.end;
-    final MainAxisAlignment mainAxisAlignment =
-        isMe ? MainAxisAlignment.end : MainAxisAlignment.start;
-
-    double fontSize = 16.0; // Taille de police par défaut
-    double containerWidth =
-        MediaQuery.of(context).size.width; // Largeur par défaut
-
-    if (message.length <= 5) {
-      // Si le message est très court, occuper environ 1/5 de la largeur de l'écran
-      containerWidth = MediaQuery.of(context).size.width * (1 / 6);
-    } else if (message.length <= 10) {
-      // Si le message est court, occuper environ 2/5 de la largeur de l'écran
-      containerWidth = MediaQuery.of(context).size.width * (1 / 5);
-    } else if (message.length <= 20) {
-      // Si le message est de longueur moyenne, occuper environ 3/5 de la largeur de l'écran
-      containerWidth = MediaQuery.of(context).size.width * (2 / 5);
-    } else if (message.length <= 50) {
-      // Si le message est assez long, occuper environ 4/5 de la largeur de l'écran
-      containerWidth = MediaQuery.of(context).size.width * (4 / 5);
-    }
-
-    if (message.length > 50) {
-      // Si le message est très long, occuper toute la largeur de l'écran
-      containerWidth = MediaQuery.of(context).size.width;
-    }
-
-    if (message.length > 50) {
-      // Si le message est long, réduire la taille de la police
-      fontSize = 14.0;
-    }
-    if (messageType == MessageType.attachment) {
-      // Pour les pièces jointes, définir la largeur du conteneur sur environ 2/3 de la largeur de l'écran
-      containerWidth = MediaQuery.of(context).size.width * (1 / 4);
-    }
+    bool isMe = senderId == currentUserId;
+    bool showAvatar = !isMe && isLastMessageFromUser;
+    Color backgroundColor = isMe
+        ? Color.fromARGB(255, 40, 46, 51)
+        : Color.fromARGB(255, 91, 109, 222);
+    Color textColor = isMe ? Colors.white : Colors.black;
 
     return Container(
-      margin: EdgeInsets.symmetric(vertical: 10.0),
-      child: Column(
-        crossAxisAlignment: crossAxisAlignment,
+      margin: EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (showAvatar)
-            CircleAvatar(
-              radius: 15.0,
-              backgroundImage: AssetImage(avatarUrl),
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border:
+                    Border.all(color: Color.fromARGB(255, 2, 2, 2), width: 2),
+              ),
+              child: ClipOval(
+                child: Image.asset(
+                  avatarUrl,
+                  width: 40,
+                  height: 40,
+                  fit: BoxFit.cover,
+                ),
+              ),
             ),
-          Row(
-            mainAxisAlignment: mainAxisAlignment,
-            children: [
-              Container(
-                width:
-                    containerWidth, // Définir la largeur du conteneur de message en fonction de la longueur du message
-                child: Container(
-                  padding: EdgeInsets.all(10.0),
-                  decoration: BoxDecoration(
-                    color: backgroundColor,
-                    borderRadius: BorderRadius.only(
-                      topLeft: Radius.circular(isMe ? 30.0 : 0.0),
-                      topRight: Radius.circular(isMe ? 0.0 : 30.0),
-                      bottomLeft: Radius.circular(30.0),
-                      bottomRight: Radius.circular(30.0),
-                    ),
+          SizedBox(width: 12),
+          Expanded(
+            child: GestureDetector(
+              onTap: () {
+                // Handle tapping on a message
+              },
+              child: Container(
+                decoration: BoxDecoration(
+                  color: backgroundColor,
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(isMe ? 20 : 0),
+                    topRight: Radius.circular(isMe ? 0 : 20),
+                    bottomLeft: Radius.circular(20),
+                    bottomRight: Radius.circular(20),
                   ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Color.fromARGB(255, 59, 39, 69).withOpacity(0.3),
+                      spreadRadius: 1,
+                      blurRadius: 3,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
+                ),
+                child: Padding(
+                  padding: EdgeInsets.all(8),
                   child: Column(
-                    crossAxisAlignment: isMe
-                        ? CrossAxisAlignment.end
-                        : CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       if (messageType == MessageType.text)
                         Text(
                           message,
-                          textAlign: isMe
-                              ? TextAlign.right
-                              : TextAlign
-                                  .left, // Texte aligné à droite pour l'utilisateur actuel, à gauche pour les autres
                           style: TextStyle(
                             color: textColor,
-                            fontSize:
-                                fontSize, // Utilisation de la taille de police calculée
+                            fontSize: 16,
                           ),
                         ),
                       if (messageType == MessageType.attachment)
@@ -400,91 +436,105 @@ class _ChatScreenState extends State<ChatScreen> {
                           message,
                           width: 200,
                           height: 200,
+                          fit: BoxFit.cover,
                         ),
-                      SizedBox(height: 5.0),
-                      if (emojis
-                          .isNotEmpty) // Placer les emojis sous le message
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                          child: Wrap(
-                            spacing: 4.0,
-                            runSpacing: 2.0,
+                      SizedBox(height: 5),
+                      if (emojis.isNotEmpty)
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
                             children: emojis.map((emoji) {
-                              return Text(
-                                emoji,
-                                style: TextStyle(fontSize: 16.0),
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 8.0),
+                                child: Text(
+                                  emoji,
+                                  style: TextStyle(fontSize: 16),
+                                ),
                               );
                             }).toList(),
                           ),
                         ),
+                      SizedBox(height: 8),
                       Text(
                         time,
                         style: TextStyle(
-                          color: textColor,
-                          fontSize: 12.0,
+                          color: textColor.withOpacity(0.6),
+                          fontSize: 12,
                         ),
                       ),
                     ],
                   ),
                 ),
               ),
-              if (!isMe)
-                IconButton(
-                  icon: Icon(Icons.add_reaction),
-                  onPressed: () {
-                    _showReactionsDialog(messageId);
-                  },
-                ),
-            ],
+            ),
           ),
+          if (!isMe)
+            GestureDetector(
+              onTap: () {
+                _showReactionsDialog(messageId);
+              },
+              child: Container(
+                margin: EdgeInsets.only(left: 8),
+                padding: EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color.fromARGB(255, 245, 245, 245).withOpacity(0.2),
+                ),
+                child: Icon(
+                  Icons.add_reaction,
+                  color: const Color.fromARGB(255, 9, 9, 9),
+                ),
+              ),
+            ),
         ],
       ),
     );
   }
 
   Widget _buildMessageComposer() {
-    return Container(
-      decoration: BoxDecoration(
-        border: Border(
-          top: BorderSide(
-            color: Color.fromARGB(255, 0, 0, 0).withOpacity(1),
-            width: 1.0,
+    return Padding(
+      padding: EdgeInsets.all(8.0),
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(
+              color: Color.fromARGB(139, 152, 78, 186)!, // Light grey border
+              width: 1.0,
+            ),
           ),
         ),
-      ),
-      child: Container(
-        padding: EdgeInsets.symmetric(horizontal: 8.0),
-        height: 70.0,
-        color: Color.fromARGB(255, 17, 22, 53),
         child: Row(
           children: [
             IconButton(
               icon: Icon(Icons.photo),
               onPressed: _selectAttachment,
-              color: Theme.of(context).canvasColor,
+              color: const Color.fromARGB(
+                  255, 91, 92, 93), // Blue color for the photo icon
             ),
             Expanded(
-              child: TextField(
-                controller: _textEditingController,
-                onChanged: (String text) {
-                  setState(() {
-                    _isComposing = text.isNotEmpty;
-                  });
-                },
-                onSubmitted: _isComposing ? _handleSubmitted : null,
-                style: TextStyle(
-                    color: Colors.white), // Set the text color to white
-                decoration: InputDecoration.collapsed(
-                  hintText: 'Send a message...',
-                  hintStyle: TextStyle(
-                      color: Colors
-                          .blue[200]), // Set the hint text color to blue-white
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8.0),
+                child: TextField(
+                  controller: _textEditingController,
+                  onChanged: (String text) {
+                    setState(() {
+                      _isComposing = text.isNotEmpty;
+                    });
+                  },
+                  onSubmitted: _isComposing ? _handleSubmitted : null,
+                  style: TextStyle(color: Colors.black87), // Black text color
+                  decoration: InputDecoration.collapsed(
+                    hintText: 'Send a message...',
+                    hintStyle: TextStyle(
+                        color: const Color.fromARGB(
+                            255, 57, 56, 56)), // Light grey hint text
+                  ),
                 ),
               ),
             ),
-            IconButton(
-              icon: Icon(Icons.send),
-              onPressed: () {
+            InkWell(
+              // InkWell for send
+              onTap: () {
                 String message = _textEditingController.text;
                 if (message.isNotEmpty) {
                   sendMessage(message, "text");
@@ -493,29 +543,54 @@ class _ChatScreenState extends State<ChatScreen> {
                   fetchMessages();
                 }
               },
-              color: Theme.of(context).canvasColor,
-            ),
-            GestureDetector(
-              onLongPressStart: (_) {
-                setState(() {
-                  _isRecording = true; // Start recording
-                  _showRecordingDialog(context); // Show recording dialog
-                });
-              },
-              onLongPressEnd: (_) {
-                setState(() {
-                  _isRecording = false; // Stop recording
-                  Navigator.of(context).pop(); // Dismiss recording dialog
-                });
-              },
-              child: IconButton(
-                icon: Icon(Icons.mic),
-                onPressed: () {
-                  // Handle short press if needed
-                },
-                color:
-                    _isRecording ? Colors.red : Theme.of(context).canvasColor,
+              child: Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color:
+                      Color.fromARGB(85, 25, 22, 103), // Blue background color
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Icon(
+                  Icons.send,
+                  color: Colors.white, // White icon color
+                ),
               ),
+            ),
+            IconButton(
+              icon: Icon(Icons.mic),
+              onPressed: () async {
+                if (!_isRecording) {
+                  // Start recording
+                  bool? hasPermission = await Record.hasPermission();
+                  if (hasPermission != null && hasPermission) {
+                    String? path = await Record.start(
+                      path: 'audio.m4a', // Specify the file path
+                    );
+                    if (path != null) {
+                      setState(() {
+                        _isRecording = true;
+                      });
+                      _showRecordingDialog(
+                          context); // Show the recording dialog
+                    }
+                  }
+                } else {
+                  // Stop recording
+                  bool stopped = await Record.stop();
+                  if (stopped) {
+                    setState(() {
+                      _isRecording = false;
+                    });
+                    Navigator.pop(context); // Close the recording dialog
+                    // Handle sending the recorded audio message
+                  }
+                }
+              },
+
+              color: _isRecording
+                  ? Colors.red
+                  : const Color.fromARGB(
+                      255, 47, 46, 46), // Red for recording, grey for default
             ),
           ],
         ),
@@ -575,111 +650,137 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Create a map to store the index of the last message from each sender
-    Map<String, int> lastMessageIndexMap = {};
-
-    // Populate the map with the index of the last message from each sender
-    for (int i = 0; i < messages.length; i++) {
-      String senderId = messages[i]['sender'];
-      lastMessageIndexMap[senderId] = i;
-    }
-
+    String avatarUrl =
+        "https://www.google.com/url?sa=i&url=https%3A%2F%2Fvariety.com%2F2022%2Ffilm%2Fnews%2Favatar-disney-plus-removal-1235348400%2F&psig=AOvVaw09ohfGgt-FHYmZzlH402ZG&ust=1715201232481000&source=images&cd=vfe&opi=89978449&ved=0CBEQjRxqFwoTCKCUkNK0_IUDFQAAAAAdAAAAABAE";
     return Scaffold(
-      appBar: AppBar(
-        title: Row(
-          children: [
-            Text(
-              widget.senderName,
-              style: TextStyle(
-                fontSize: 24.0,
-                fontWeight: FontWeight.bold,
+      appBar: PreferredSize(
+        preferredSize: Size.fromHeight(kToolbarHeight),
+        child: AppBar(
+          elevation: 0, // Remove the default shadow
+          backgroundColor: Colors.transparent, // Make the app bar transparent
+          flexibleSpace: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Color.fromARGB(134, 77, 17, 174), // Top color
+                  Color.fromARGB(255, 169, 178, 185), // Bottom color
+                ],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
               ),
-            ),
-          ],
-        ),
-        actions: [
-          InkWell(
-            onTap: () {
-              // Navigate to video call screen when tapped
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) =>
-                      VideoCallScreen(conversationId: widget.conversationId),
-                ),
-              );
-            },
-            borderRadius:
-                BorderRadius.circular(30), // Adjust the value as needed
-            child: Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Icon(
-                Icons.video_call,
-                color: Theme.of(context).canvasColor,
+              borderRadius: BorderRadius.vertical(
+                bottom: Radius.circular(20), // Adjust the radius as needed
               ),
             ),
           ),
-          InkWell(
-            onTap: () {
-              // Navigate to voice call screen when tapped
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) =>
-                      VoiceCallScreen(conversationId: widget.conversationId),
+          title: Row(
+            children: [
+              Text(
+                widget.senderName,
+                style: TextStyle(
+                  fontSize: 24.0,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white, // Title text color
                 ),
-              );
-            },
-            borderRadius:
-                BorderRadius.circular(30), // Adjust the value as needed
-            child: Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Icon(
-                Icons.call,
-                color: Theme.of(context).canvasColor,
               ),
-            ),
-          ),
-          PopupMenuButton(
-            itemBuilder: (BuildContext context) => <PopupMenuEntry>[
-              PopupMenuItem(
-                child: Text('Attachments'),
-                onTap: _displayAttachments,
+              SizedBox(width: 8), // Add some spacing between name and avatar
+              CircleAvatar(
+                backgroundImage: NetworkImage(
+                    avatarUrl), // Replace currentUserImageUrl with the URL of the current user's profile picture
+                radius: 12, // Adjust the size as needed
               ),
-              PopupMenuItem(
-                child: Text('Mute notifications'),
+              SizedBox(
+                  width:
+                      8), // Add some spacing between avatar and connection indicator
+              Icon(
+                Icons.circle, // Add the connection indicator icon here
+                color: Color.fromARGB(
+                    255, 21, 246, 0), // Change color based on connection status
+                size: 12, // Adjust the size as needed
               ),
             ],
           ),
-        ],
+          actions: [
+            IconButton(
+              icon: Icon(Icons.video_call),
+              onPressed: () {
+                // Navigate to the video call screen or trigger video call action
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => VideoCallScreen(
+                            conversationId: '',
+                          )), // Replace VideoCallScreen() with your actual video call screen
+                );
+              },
+              color: const Color.fromARGB(255, 11, 11, 11), // Icon color
+            ),
+            IconButton(
+              icon: Icon(Icons.call),
+              onPressed: () {
+                // Navigate to the voice call screen or trigger voice call action
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => VoiceCallScreen(
+                            conversationId: '',
+                          )), // Replace VoiceCallScreen() with your actual voice call screen
+                );
+              },
+
+              color: const Color.fromARGB(255, 0, 0, 0), // Icon color
+            ),
+            PopupMenuButton(
+              itemBuilder: (BuildContext context) => <PopupMenuEntry>[
+                PopupMenuItem(
+                  child: Text('Attachments'),
+                  onTap: _displayAttachments,
+                ),
+                PopupMenuItem(
+                  child: Text('Mute notifications'),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
       body: Column(
         children: [
           Expanded(
-            child: ListView.builder(
-              reverse: false,
-              itemCount: messages.length,
-              itemBuilder: (context, index) {
-                final message = messages[index];
-                List<String> emojis = message['emojis'] != null
-                    ? List<String>.from(message['emojis'])
-                    : [];
-                MessageType messageType = message['type'] == 'text'
-                    ? MessageType.text
-                    : MessageType.attachment;
-                // Determine if it's the last message from another user
-                bool isLastMessageFromUser =
-                    lastMessageIndexMap[message['sender']] == index;
-                return _buildMessage(
-                  senderId: message['sender'], // Add senderId parameter
-                  currentUserId: currentUserId, // Add currentUserId parameter
-                  avatarUrl: 'assets/images/1.png', // Adjust as needed
-                  message: message['content'] ?? '',
-                  time: message['timestamp'] ?? '',
-                  messageType: messageType,
-                  messageId: message['_id'] ?? '',
-                  emojis: emojis,
-                  isLastMessageFromUser: isLastMessageFromUser, // Pass the flag
+            child: AutoScroller(
+              controller: _autoScrollerController, // Assign the controller
+              lengthIdentifier: messages.length,
+              anchorThreshold: 24,
+              startAnchored: false,
+              builder: (context, controller) {
+                // Reverse the order of messages
+                List<dynamic> reversedMessages = List.from(messages.reversed);
+                return ListView.builder(
+                  reverse: true, // Set reverse to true for auto-scrolling
+                  itemCount: reversedMessages.length,
+                  itemBuilder: (context, index) {
+                    final message = reversedMessages[index];
+                    List<String> emojis = message['emojis'] != null
+                        ? List<String>.from(message['emojis'])
+                        : [];
+                    MessageType messageType = message['type'] == 'text'
+                        ? MessageType.text
+                        : MessageType.attachment;
+                    // Determine if it's the last message from another user
+                    bool isLastMessageFromUser =
+                        lastMessageIndexMap[message['sender']] == index;
+                    return _buildMessage(
+                      senderId: message['sender'],
+                      currentUserId: currentUserId,
+                      avatarUrl: 'assets/images/avatar.png',
+                      message: message['content'] ?? '',
+                      time: message['timestamp'] ?? '',
+                      messageType: messageType,
+                      messageId: message['_id'] ?? '',
+                      emojis: emojis,
+                      isLastMessageFromUser: isLastMessageFromUser,
+                    );
+                  },
                 );
               },
             ),
@@ -701,6 +802,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _showRecordingDialog(BuildContext context) {
+    bool isRecording = false; // Track whether recording is in progress
+    Color iconColor = Colors.black; // Initialize the icon color
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -708,9 +812,26 @@ class _ChatScreenState extends State<ChatScreen> {
         alignment: Alignment.bottomCenter,
         children: [
           GestureDetector(
-            onTap: () => Navigator.pop(context),
+            onTapDown: (_) {
+              // When user taps down, set isRecording to true and update icon color to red
+              setState(() {
+                isRecording = true;
+                iconColor = Colors.red;
+              });
+            },
+            onTapUp: (_) {
+              // When user releases tap, set isRecording to false and update icon color to black
+              setState(() {
+                isRecording = false;
+                iconColor = Colors.black;
+              });
+            },
+            onTapCancel: () {
+              // Handle tap cancel event if needed
+            },
             child: Container(
-              color: Colors.black.withOpacity(0.4),
+              color: const Color.fromARGB(0, 119, 114,
+                  114), // Set the color to transparent to capture tap events
               width: double.infinity,
               height: double.infinity,
             ),
@@ -743,6 +864,34 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
           ),
+          Positioned(
+            bottom: 40.0, // Adjust bottom padding as needed
+            left: 20.0,
+            child: GestureDetector(
+              onTapDown: (_) {
+                // When user taps down, set isRecording to true and update icon color to red
+                setState(() {
+                  isRecording = true;
+                  iconColor = Colors.red;
+                });
+              },
+              onTapUp: (_) {
+                // When user releases tap, set isRecording to false and update icon color to black
+                setState(() {
+                  isRecording = false;
+                  iconColor = Colors.black;
+                });
+              },
+              onTapCancel: () {
+                // Handle tap cancel event if needed
+              },
+              child: Icon(
+                Icons.mic,
+                size: 50,
+                color: iconColor,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -758,6 +907,37 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     }
   }
+}
+
+class Message {
+  final User sender;
+  final String
+      time; // Would usually be type DateTime or Firebase Timestamp in production apps
+  final String text;
+  final bool isLiked;
+  final bool unread;
+  final String reaction;
+  final MessageType type;
+
+  Message({
+    required this.sender,
+    required this.time,
+    required this.text,
+    required this.isLiked,
+    required this.unread,
+    required this.reaction,
+    required this.type,
+  });
+
+  bool get isRead => true;
+
+  get reactions => ['😊', '😂', '😍', '👍', '👏', '❤️', '🔥', '🎉', '🤔'];
+}
+
+// Enum to represent message types
+enum MessageType {
+  text,
+  attachment,
 }
 
 class RefreshedChatScreen extends StatefulWidget {

@@ -1,5 +1,4 @@
 import 'dart:convert';
-
 import 'package:crosschatsdk/chat_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -9,8 +8,27 @@ class ContactsSDK {
   final String currentUserId;
   final String apiKey;
 
-  ContactsSDK(
-      {required this.users, required this.currentUserId, required this.apiKey});
+  // Customizable parameters with default values
+  final Color backgroundColor;
+  final Color textColor;
+  final Color iconColor;
+  final double avatarRadius;
+  final TextStyle userNameTextStyle;
+
+  ContactsSDK({
+    required this.users,
+    required this.currentUserId,
+    required this.apiKey,
+    this.backgroundColor = const Color.fromARGB(255, 22, 43, 81),
+    this.textColor = Colors.blueGrey,
+    this.iconColor = Colors.green,
+    this.avatarRadius = 35.0,
+    this.userNameTextStyle = const TextStyle(
+      color: Colors.blueGrey,
+      fontSize: 16.0,
+      fontWeight: FontWeight.w600,
+    ),
+  });
 
   Future<void> createOrGetConversation(
       String clickedUserId, BuildContext context) async {
@@ -19,7 +37,7 @@ class ContactsSDK {
           'Attempting to create or get conversation for user: $clickedUserId');
       final response = await http.get(
         Uri.parse(
-            'http://10.0.2.2:9090/conversation/$currentUserId/$clickedUserId'),
+            'http://10.0.2.2:8080/conversation/$currentUserId/$clickedUserId'),
         headers: {
           'x-secret-key': apiKey, // Include the API key in the request headers
         },
@@ -76,7 +94,8 @@ class FavouriteContacts extends StatelessWidget {
           ),
           Container(
             height: 120.0,
-            color: Color.fromARGB(255, 22, 43, 81), // Background color
+            color: contactsSDK
+                .backgroundColor, // Use the customizable background color
             child: ListView.builder(
               padding: EdgeInsets.only(left: 10.0),
               scrollDirection: Axis.horizontal,
@@ -87,19 +106,20 @@ class FavouriteContacts extends StatelessWidget {
                   child: Column(
                     children: [
                       Material(
-                        color: Color.fromARGB(255, 22, 43, 81),
+                        color: contactsSDK
+                            .backgroundColor, // Use the customizable background color
                         child: InkWell(
                           onTap: () {
                             print(
                                 'Image tapped for user ID: ${contactsSDK.users[index].id}');
-
                             contactsSDK.createOrGetConversation(
                               contactsSDK.users[index].name.toString(),
                               context,
                             );
                           },
                           child: CircleAvatar(
-                            radius: 35.0,
+                            radius: contactsSDK
+                                .avatarRadius, // Use the customizable avatar radius
                             backgroundImage:
                                 AssetImage(contactsSDK.users[index].imageUrl),
                           ),
@@ -111,17 +131,15 @@ class FavouriteContacts extends StatelessWidget {
                         children: [
                           Text(
                             contactsSDK.users[index].name,
-                            style: TextStyle(
-                              color: Colors.blueGrey,
-                              fontSize: 16.0,
-                              fontWeight: FontWeight.w600,
-                            ),
+                            style: contactsSDK
+                                .userNameTextStyle, // Use the customizable text style
                           ),
                           SizedBox(width: 5.0),
                           Icon(
                             Icons.circle,
                             size: 12.0,
-                            color: Colors.green,
+                            color: contactsSDK
+                                .iconColor, // Use the customizable icon color
                           ),
                         ],
                       ),
